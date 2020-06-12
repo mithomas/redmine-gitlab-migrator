@@ -3,6 +3,8 @@ import argparse
 import logging
 import re
 import sys
+import os
+from git import Repo
 
 from redmine_gitlab_migrator.redmine import RedmineProject, RedmineClient
 from redmine_gitlab_migrator.gitlab import GitlabProject, GitlabClient
@@ -185,6 +187,63 @@ def perform_migrate_pages(args):
     # Get copy of GitLab wiki repository
     wiki = WikiPageConverter(args.gitlab_wiki)
 
+    # create work dict
+    work = {}
+    for p in redmine_project.get_all_pages():
+        if 'parent' in p:
+            work[p['title']] = p['parent']['title']
+        else:
+            work[p['title']] = None
+
+    # recursive function to parse the child/parent
+    def parseTree(work, next = None):
+        ret = {}
+        for child,parent in work.copy().items():
+            if parent == next:
+                work.pop(child)
+                ret[child] = parseTree(work, child)
+        if not ret:
+            ret = None
+        return ret
+    wikitree = parseTree(work)
+
+    # create a path tree
+    def printTree(wikitree, ischild = ''):
+        if wikitree and not len(wikitree) == 0:
+            ret = {}
+            for p,child in wikitree.items():
+                if p == 'WikiStart':
+                    p = 'home'
+                if ischild != '':
+                    ret[p] = os.path.join(ischild, p)
+                else:
+                    ret[p] = p
+                # has child
+                if child and not len(child) == 0:
+                    dirpath = os.path.join(ischild, p)
+                    ret.update(printTree(child, dirpath))
+        return ret
+    tree = printTree(wikitree)
+
+    # create tree index.md file
+    idxcont = "# Index\n\n"
+    for k,e in tree.items():
+        spaces = ''
+        indent = len(e.split('/'))
+        if indent > 1:
+            spaces = (4 * (indent-1)) * (' ')
+        idxcont += spaces + "* ["+k+"]("+e+")\n"
+
+    # write tree index file
+    f = open(args.gitlab_wiki + "/index.md", "w")
+    f.write(idxcont)
+    f.close()
+
+    # add tree index to git repo
+    repo = Repo(args.gitlab_wiki)
+    repo.index.add('index.md')
+    repo.index.commit("add new index file")
+
     # convert all pages including history
     pages = []
     for page in redmine_project.get_all_pages():
@@ -193,6 +252,7 @@ def perform_migrate_pages(args):
         for version in range(start_version, page["version"]+1):
             try:
                 full_page = redmine_project.get_page(page["title"], version)
+                full_page['path'] = tree[page['title']]
                 pages.append(full_page)
             except:
                 log.error("Error when retrieving " + page["title"] + ", version " + str(version))

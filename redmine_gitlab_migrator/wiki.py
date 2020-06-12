@@ -149,7 +149,7 @@ class WikiPageConverter():
         text = text.replace("{{lastupdated_at}}", redmine_page["updated_on"])
         text = text.replace("{{lastupdated_by}}", redmine_page["author"]["name"])
         text = text.replace("[[PageOutline]]", "")
-        text = text.replace("{{>toc}}", "")
+        text = text.replace("{{>toc}}", "REPLACETOC")
 
         text = self.textile_converter.convert(text)
 
